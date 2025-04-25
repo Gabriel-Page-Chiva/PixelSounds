@@ -57,6 +57,33 @@ def histograma(input_img):
     
     return None
 
+def gradiente(imagen_gris,tipo="X"):
+
+    kernel_x = np.array([
+        [-1, 0, 1],
+        [-1, 0, 1],
+        [-1, 0, 1]
+    ])
+
+    kernel_y = np.array([
+        [-1,-1,-1],
+        [ 0, 0, 0],
+        [ 1, 1, 1]
+    ])
+    
+    grad_x = cv2.filter2D(imagen_gris, cv2.CV_64F, kernel_x)
+
+    grad_y = cv2.filter2D(imagen_gris, cv2.CV_64F, kernel_y)
+
+    # Magnitud del gradiente
+    magnitud = np.sqrt(grad_x**2 + grad_y**2)
+    magnitud = cv2.normalize(magnitud, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Dirección del gradiente
+    direccion = np.arctan2(grad_y, grad_x)
+
+    return grad_x, grad_y, magnitud, direccion
+
 #########################################################################################
 # Funciones para plotear
 #########################################################################################
