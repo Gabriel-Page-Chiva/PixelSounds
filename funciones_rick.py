@@ -1,3 +1,4 @@
+import vozyaudio as vz
 import numpy as np
 import matplotlib.pyplot as plt
 import vozyaudio as vz
@@ -6,96 +7,128 @@ import os
 import shutil
 
 
-def generarVideo(fa, espectro, energia, centroide, i, tamBloq, url_audio):
-    # Crear fotograma RGB
+def generarFrame(fa, espectro, energia, centroide, i, tamBloq, url_audio):
+    """
+    Genera un fotograma RGB basado en el centroide y la energia del bloque.
+
+    fa: frecuencias del espectro
+    espectro: magnitud espectral
+    energia: energia temporal del bloque
+    centroide: centroide espectral
+    i: indice del fotograma
+    tamBloq: tamaño del fotograma (pixeles)
+    url_audio: ruta al audio (no usado)
+    """
     fotograma = np.zeros((tamBloq, tamBloq, 3), dtype=np.float64)
 
-    # Normalizar espectro y centroide para visualizar
-    espectro_norm = espectro / (np.max(espectro) + 1e-12)
-    idx_frec = (fa / np.max(fa) * (tamBloq - 1)).astype(int)
-    fotograma[:, idx_frec, 0] = espectro_norm  # canal R para espectro
+    centroide_norm = centroide / (np.max(fa) + 1e-12)
 
-    # Dibujar energía (barra vertical en el borde izquierdo)
-    energia_norm = energia / (np.max(espectro) * tamBloq)  # normalización relativa
-    alto = int(energia_norm * tamBloq)
-    fotograma[tamBloq - alto:, 0:10, 1] = 1  # canal G para energía
+    if centroide_norm < 0.33:
+        color = np.array([0, 0, 1])  # azul
+    elif centroide_norm < 0.66:
+        color = np.array([1, 1, 0])  # amarillo
+    else:
+        color = np.array([1, 0, 0])  # rojo
 
-    # Dibujar centroide (línea horizontal)
-    centroide_idx = int(centroide / (np.max(fa) + 1e-12) * tamBloq)
-    if 0 <= centroide_idx < tamBloq:
-        fotograma[centroide_idx, :, 2] = 1  # canal B para centroide
+    brillo = energia / (energia + 1e-12)
+    brillo = np.clip(energia, 0, 1)
+    fotograma[:] = brillo * color
 
-    # Guardar imagen
     plt.imsave(f'fotogramas/bloque_{i:04d}.png', fotograma)
 
-    # Si es el ultimo bloque, generar video
-    if i == -1:
-        subprocess.run([
-            'ffmpeg', '-framerate', '25',
-            '-i', 'fotogramas/bloque_%04d.png',
-            '-i', f'{url_audio}',
-            '-c:v', 'libx264',
-            '-c:a', 'aac',
-            '-pix_fmt', 'yuv420p',
-            '-shortest',
-            'salida.mp4'
-        ])
-        shutil.rmtree('fotogramas')
 
 def calcular_descriptores(bloque, fs):
+    """
+    Calcula descriptores espectrales y energéticos de un bloque de audio.
+
+    Parámetros:
+    bloque : ndarray
+        Bloque de muestras de audio (1D).
+    fs : int o float
+        Frecuencia de muestreo en Hz.
+
+    Devuelve:
+    espectro : ndarray
+        Espectro de magnitud del bloque.
+    fa : ndarray
+        Vector de frecuencias asociado al espectro.
+    energia : float
+        Energía temporal del bloque (suma de muestras al cuadrado).
+    centroide : float
+        Centroide espectral (frecuencia promedio ponderada por energía).
+    entropia : float
+        Entropía espectral (medida de aleatoriedad o dispersión).
+    freq_90 : float
+        Frecuencia hasta la cual se acumula el 90% de la energía espectral.
+    """
+
+    # Espectro
     espectro, fa = vz.espectro(bloque, fs=fs)
     
     # Energia del bloque
     energia = np.sum(bloque**2)
 
-    # Centroide espectral: indica hacia dónde está concentrada la energía en frecuencia
-    # Valores altos: sonido más brillante / agudo; valores bajos: sonido más grave
+    # Centroide espectral
     centroide = np.sum(fa * espectro) / (np.sum(espectro) + 1e-12)
 
-    return espectro, fa, energia, centroide
+    # Entropia espectral
+    prob = espectro / (np.sum(espectro) + 1e-12)
+    entropia = -np.sum(prob * np.log2(prob + 1e-12))
 
-def ricardo(audio, fs, url_audio, tamBloq=1024, salto=512, ventana='hann'):
+    # Frecuencia máxima significativa (90% energía)
+    energia_total = np.sum(espectro)
+    energia_acumulada = np.cumsum(espectro) 
+    indice_max_freq = np.searchsorted(energia_acumulada, 0.9 * energia_total)
+    freq_90 = fa[min(indice_max_freq, len(fa) - 1)]  # por si acaso
+
+    return espectro, fa, energia, centroide, entropia, freq_90
+
+
+def ricardo(audio, fs, url_audio):
     """
     Procesa un audio por bloques, genera fotogramas y guarda descriptores.
 
     audio: array de la señal de audio
     fs: frecuencia de muestreo
-    tamBloq: Tamaño de bloque
-    salto: Salto entre bloques
-    ventana: Tipo de ventana (por defecto 'hann')
+    url_audio: ruta al archivo de audio (para el posterior montaje de video)
     """
-    # Crear carpeta de salida si no existe
-    os.makedirs('fotogramas', exist_ok=True)
-
-    # Procesado por bloques
+    
+    # Eliminar y crear carpeta de fotogramas
+    if os.path.exists('fotogramas'):
+        shutil.rmtree('fotogramas')
+    os.makedirs('fotogramas')
+    
+    # Definición de tamaño de bloque
+    tamBloq = fs // 25  # 25 FPS
+    salto = tamBloq     # No solape
+    print(f"TamBloq {tamBloq}, Seg {fs/tamBloq:.2f}, Fs {fs}")
+    
+    # Número total de bloques
     n_bloques = int(np.floor((len(audio) - tamBloq) / salto))
 
-    descriptores = {
-        'fs': fs,
-        'tamBloq': tamBloq,
-        'salto': salto,
-        'n_bloques': n_bloques,
-        'energia': [],
-        'centroide': []
-    }
-
+    # Procesado por bloques
     for i in range(n_bloques):
-        # Obtener bloque
-        bloque = audio[i*salto : i*salto + tamBloq]
-        bloque = bloque * np.hanning(tamBloq)
-        print(bloque,fs)
+        porcentaje = (i / n_bloques) * 100
+        print(f"\rCompletado {porcentaje:.2f} %", end="", flush=True)
+        
+        # Obtener bloque (sin ventana)
+        bloque = audio[i * salto : i * salto + tamBloq]
 
         # Analizar bloque
-        espectro, fa, energia, centroide = calcular_descriptores(bloque, fs)
-
-        # Guardar descriptores
-        descriptores['energia'].append(energia)
-        descriptores['centroide'].append(centroide)
+        espectro, fa, energia, centroide, entropia, freq_90 = calcular_descriptores(bloque, fs)
 
         # Generar fotograma
-        generarVideo(fa, espectro, energia, centroide, i, tamBloq, url_audio)
+        generarFrame(fa, espectro, energia, centroide, i, tamBloq, url_audio)
+    
+    print("\nFotogramas generados.")
 
-    print('Procesado terminado.')
+def generarVideo(url_audio):
+    try:
+        subprocess.run(['generarVideo.bat', url_audio], check=True)
+    except subprocess.CalledProcessError as e:
+        print("Error al ejecutar generarVideo.bat:", e)
 
-    # Guardar descriptores para revertir
-    np.save('descriptores.npy', descriptores)
+    finally:
+        shutil.rmtree('fotogramas/')
+
+        print('Procesado terminado.')
