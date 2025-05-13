@@ -49,29 +49,25 @@ def extract_ycbcr(input_img):
 # Funciones para extraccion de parametros de una imagen
 #########################################################################################
 
-def histograma(input_img, bins=256, rango=(0, 256)):
+def histograma(imagen_gris, bins=256, rango=(0, 256)):
     """
-    Recibe una imagen con 1 o mas canales de color
-    y devuelve un array con los histogramas correspondientes
+    Calcula el histograma de una imagen en escala de grises.
+    
+    Parámetros:
+    - img_gray: imagen en escala de grises (matriz 2D).
+    - bins: número de contenedores del histograma.
+    - rango: rango de valores de los píxeles.
+
+    Devuelve:
+    - hist: array 1D con los valores del histograma.
     """
-    histogramas = []
-    
-    if len(input_img.shape) == 2: # Solo un canal de color
-        hist = cv2.calcHist([input_img], [0], None, [bins], rango)
-        histogramas.append(hist)
-    else:                         # Mas de un canal de color
-        num_canales = input_img.shape[2]
-        for canal in range(num_canales):
-            hist = cv2.calcHist([input_img], [canal], None, [bins], rango)
-            histogramas.append(hist)
-    
-    return histogramas
+    hist = cv2.calcHist([imagen_gris], [0], None, [bins], rango)
+    return hist
 
 def gradiente(imagen_gris):
     """
     Recibe una imagen de un canal y devuelve
-    su gradiente en x, en y, el módulo y
-    la dirección de este
+    su gradiente en x, en y y el módulo de este
     """
     
     kernel_x = np.array([ # Mascara de Prewitt para el eje x
@@ -88,68 +84,75 @@ def gradiente(imagen_gris):
     grad_y = cv2.filter2D(imagen_gris, cv2.CV_64F, kernel_y)          # Gradiente en y
     magnitud = np.sqrt(grad_x**2 + grad_y**2)                         # Magnitud del gradiente
     magnitud = cv2.normalize(magnitud, None, 0, 255, cv2.NORM_MINMAX) # Normalizada para que pueda ser tratada como una imagen
-    direccion = np.arctan2(grad_y, grad_x)                            # Dirección del gradiente
-    return grad_x, grad_y, magnitud, direccion
+    return grad_x, grad_y, magnitud
 
-def entropia(input_img):
+def entropia(imagen_gris):
     """
-    Recibe una imagen y calcula su entropía por canal
-    """
-    # Asegurarnos de que es imagen en escala de grises
-    if len(imagen.shape) == 3:
-        imagen = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
+    Calcula la entropía de una imagen en escala de grises (2D).
     
-    # Calcular histograma normalizado
-    hist = cv2.calcHist([imagen], [0], None, [256], [0, 256])
-    hist_norm = hist / np.sum(hist)
+    Parámetros:
+    - imagen_gris: imagen 2D en escala de grises.
 
-    # Evitar log(0) usando una máscara
-    hist_norm = hist_norm[hist_norm > 0]
+    Devuelve:
+    - entropía (float): medida de la cantidad de información en la imagen.
+    """
 
-    # Calcular entropía
-    entropia = -np.sum(hist_norm * np.log2(hist_norm))
+    hist         = histograma(imagen_gris)                       # Histograma 
+    hist_norm    = hist/ hist.sum()                              # Histograma normalizado
+    hist_nonzero = hist_norm[hist_norm > 0]                      # Evitar log(0)
+    entropia     = -np.sum(hist_nonzero * np.log2(hist_nonzero)) # Calcular entropía
     return entropia
 
-def LPB():
+def LBP(imagen_gris):
     """
-    Recibe una imagen y compara cada pixel con sus 8 vecinos de alrededor,
-    si es mayor que este el resultado será 1 y si no 0. Se construye asi un
-    numero binario de 8 digitos por cada pixel de la imagen en cada canal,
-    obteniendo una imagen en la que ves los patrones de intensidad de los
-    pixeles por regiones.
+    Calcula el Local Binary Pattern (LBP) de una imagen en escala de grises (2D) de forma vectorizada.
+
+    Parámetros:
+    - imagen_gris: imagen 2D en escala de grises.
+
+    Devuelve:
+    - lbp: imagen 2D con los valores LBP.
     """
-        # Asegurarnos de que es imagen en escala de grises
-    if len(imagen.shape) == 3:
-        imagen = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
-    
-    # Inicializar la imagen LBP
-    lbp = np.zeros_like(imagen, dtype=np.uint8)
 
-    # Definir los desplazamientos (dx, dy) de los 8 vecinos
-    vecinos = [(-1, -1), (0, -1), (1, -1),
-                (1, 0), (1, 1), (0, 1),
-               (-1, 1), (-1, 0)]
+    imagen_gris = imagen_gris.astype(np.uint8) # Asegurar que la imagen es tipo uint8
+    offsets     = [(-1, -1), (0, -1), (1, -1), # Definir desplazamientos y pesos en sentido horario
+                   (1,  0), (1,  1), (0,  1),
+                   (-1, 1), (-1, 0)]
     
-    filas, cols = imagen.shape
+    pesos  = [1 << i for i in range(8)]                 # [1, 2, 4, 8, 16, 32, 64, 128]
+    lbp    = np.zeros_like(imagen_gris, dtype=np.uint8) # Imagen LBP
+    centro = imagen_gris[1:-1, 1:-1]                    # Imagen sin bordes (zona válida)
 
-    for y in range(1, filas-1):
-        for x in range(1, cols-1):
-            valor_centro = imagen[y, x]
-            codigo = 0
-            for idx, (dx, dy) in enumerate(vecinos):
-                vecino = imagen[y + dy, x + dx]
-                codigo |= (vecino >= valor_centro) << idx
-            lbp[y, x] = codigo
+    for (dy, dx), peso in zip(offsets, pesos):
+        vecino = imagen_gris[1+dy: -1+dy, 1+dx: -1+dx]
+        lbp[1:-1, 1:-1] |= ((vecino >= centro) * peso).astype(np.uint8)
 
     return lbp
 
-#########################################################################################
-# Funciones para plotear
-#########################################################################################
 
-def show_canales():
-    return None
+def DFT_img(imagen_gris):
+    """
+    Calcula la Transformada Discreta de Fourier (DFT) 2D de una imagen en escala de grises,
+    y devuelve los promedios de magnitud espectral a lo largo de los ejes X e Y.
+    """
+    
+    img = imagen_gris.astype(np.float32) # Asegurar tipo float para precisión
+    DFT = fft.fft2(img)                  # Aplicar FFT 2D
+    F_shift = fft.fftshift(DFT)
+    modulo = np.abs(F_shift)             # Modulo del espectro
+    DFT_x = np.mean(modulo, axis=0)      # Media de las frecuencias de las columnas
+    DFT_y = np.mean(modulo, axis=1)      # Media de las frecuencias de las filas
+    return DFT_x, DFT_y
 
-def show_histograma():
-    return None
-
+def DCT_img(imagen_gris):
+    """
+    Calcula la Transformada Discreta del Coseno (DCT) 2D de una imagen en escala de grises,
+    y devuelve los promedios de magnitud espectral a lo largo de los ejes X e Y.
+    """
+    
+    img = imagen_gris.astype(np.float32)                        # Asegurar tipo float para precisión
+    DCT = fft.dct(fft.dct(img.T, norm='ortho').T, norm='ortho') # DCT por filas, luego por columnas (2D)
+    magnitud = np.abs(DCT)                                      # Modulo de la transformada
+    DCT_x = np.mean(magnitud, axis=0)                           # Media de las frecuencias de las columnas
+    DCT_y = np.mean(magnitud, axis=1)                           # Media de las frecuencias de las filas
+    return DCT_x, DCT_y
