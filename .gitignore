@@ -2,3 +2,5 @@ fotogramas/
 __pycache__/
 *.npy
 *.mp4
+analisis/
+exports/
