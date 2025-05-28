@@ -159,16 +159,26 @@ class PixelSoundsEncoder:
 
         print(f"[Encoder] Frames generados en '{self.frames_dir}/'")
 
+
     def encode_video(self, output_name=None):
         base = os.path.splitext(os.path.basename(self.audio_path))[0]
         name = output_name or f"{base}_{self.map_mode}_{self.color_mode}.mp4"
         out  = os.path.join(self.export_dir, name)
         if os.path.exists(out):
             os.remove(out)
-        subprocess.run(
-            ["cmd", "/c", "generarVideo2.bat", str(self.fps), out],
-            check=True
-        )
+
+        cmd = [
+            "ffmpeg",
+            "-y",                            # sobrescribir sin preguntar
+            "-framerate", str(self.fps),    # fps como primer argumento
+            "-i", os.path.join(self.frames_dir, "frame_%04d.png"),
+            "-c:v", "libx264",
+            "-crf", "0",                     # calidad sin pérdida
+            "-preset", "veryslow",           # preset muy lento para máxima compresión
+            "-pix_fmt", "yuv444p",           # formato 4:4:4 (igual que en tu .bat)
+            out
+        ]
+        subprocess.run(cmd, check=True)
         print(f"[Encoder] Vídeo exportado en '{out}'")
         return out
 
