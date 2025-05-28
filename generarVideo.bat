@@ -6,4 +6,4 @@ ffmpeg ^
 -c:a aac ^
 -pix_fmt yuv420p ^
 -shortest ^
-salida.mp4
+"%~2"
