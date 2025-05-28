@@ -24,3 +24,20 @@ No habría que abandonar al 100% este camino, pero habría que darle una vuelta 
 Otra posibilidad es, y a esta le veo más futuro, poder asociar el uso de efectos a ciertas partes o toda la señal sonora en base al histograma de alguno o todos sus canales de color. Por ejemplo, si se dividiera el histograma del brillo de la imagen en ciertos rangos y donde cayera cierto porcentaje de píxeles en este aplicar de una forma u otra ciertos efectos.
 
 Ejemplo: analizando el histograma de brillo de un bloque de una imagen dada se ha visto que el 60% de todos los píxeles tienen un valor entre 0 y 50 de brillo. Esto provocará que a ese bloque de la imagen se le aplique un efecto de eco múltiple con 3 repeticiones, retardadas 0.3, 0.5 y 0.7 segundos y amplitudes indirectas 0.5, 0.3, y 0.22
+
+
+
+
+## #RICARDO
+
+Se ha desarrollado un sistema de codificación inversa que transforma señales de audio en una secuencia de imágenes, y permite su posterior reconstrucción para recuperar la señal original.
+
+Este sistema, denominado **PixelSounds**, analiza el audio en bloques temporales y codifica sus características en imágenes (en escala de grises o RGB) que se empaquetan como vídeo. Cada fotograma representa un bloque de audio, y existen distintos modos de codificación:
+
+- **AMPL:** codifica directamente la forma de onda normalizada.
+- **FFT:** aplica una Transformada Rápida de Fourier (FFT) por bloque, codificando su magnitud y fase.
+- **FIR:** aplica tres filtros FIR (bajo, banda y alto) y codifica la energía de cada banda como un canal RGB (en color) o como filas intercaladas (en gris).
+
+El vídeo resultante contiene toda la información necesaria para reconstruir el audio. Un decodificador extrae los frames, interpreta los datos según el modo y realiza un *overlap-add* con ventana para recomponer la señal.
+
+Este enfoque permite visualizar el contenido de una señal sonora en el dominio de la imagen, abrir vías de codificación reversible o incluso fusionar audio e imagen en un medio común.
