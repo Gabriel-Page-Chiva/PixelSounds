@@ -56,7 +56,7 @@ def extract_ycbcr(input_img):
 
 def histograma(imagen_gris, bins=256, rango=(0, 256)):
     """
-    Calcula el histograma de una imagen en escala de grises.
+    Calcula el histograma normalizado de una imagen en escala de grises.
     
     Parámetros:
     - img_gray: imagen en escala de grises (matriz 2D).
@@ -67,6 +67,7 @@ def histograma(imagen_gris, bins=256, rango=(0, 256)):
     - hist: array 1D con los valores del histograma.
     """
     hist = cv2.calcHist([imagen_gris], [0], None, [bins], rango)
+    hist /= np.sum(hist)
     return hist
 
 def gradiente(imagen_gris):
@@ -89,6 +90,7 @@ def gradiente(imagen_gris):
     grad_y   = cv2.filter2D(imagen_gris, cv2.CV_64F, kernel_y)        # Gradiente en y
     magnitud = np.sqrt(grad_x**2 + grad_y**2)                         # Magnitud del gradiente
     magnitud = cv2.normalize(magnitud, None, 0, 255, cv2.NORM_MINMAX) # Normalizada para que pueda ser tratada como una imagen
+    magnitud = np.ones(magnitud.shape) - magnitud
     return magnitud
 
 def entropia(imagen_gris):
@@ -107,34 +109,6 @@ def entropia(imagen_gris):
     hist_nonzero = hist_norm[hist_norm > 0]                      # Evitar log(0)
     entropia     = -np.sum(hist_nonzero * np.log2(hist_nonzero)) # Calcular entropía
     return entropia
-
-
-"""
-def LBP(imagen_gris):
-    
-    Calcula el Local Binary Pattern (LBP) de una imagen en escala de grises (2D) de forma vectorizada.
-
-    Parámetros:
-    - imagen_gris: imagen 2D en escala de grises.
-
-    Devuelve:
-    - lbp: imagen 2D con los valores LBP.
-    
-
-    imagen_gris = imagen_gris.astype(np.uint8)          # Asegurar que la imagen es tipo uint8
-    offsets     = [(-1, -1), (0, -1), (1, -1),          # Definir desplazamientos y pesos en sentido horario
-                   (1,  0), (1,  1), (0,  1),
-                   (-1, 1), (-1, 0)]
-    
-    pesos  = [1 << i for i in range(8)]                 # [1, 2, 4, 8, 16, 32, 64, 128]
-    lbp    = np.zeros_like(imagen_gris, dtype=np.uint8) # Imagen LBP
-    centro = imagen_gris[1:-1, 1:-1]                    # Imagen sin bordes (zona válida)
-
-    for (dy, dx), peso in zip(offsets, pesos):
-        vecino = imagen_gris[1+dy: -1+dy, 1+dx: -1+dx]
-        lbp[1:-1, 1:-1] |= ((vecino >= centro) * peso).astype(np.uint8)
-
-    return lbp"""
     
 def LBP(imagen_gris):
     imagen_gris = imagen_gris.astype(np.uint8)
@@ -164,101 +138,192 @@ def LBP(imagen_gris):
 
     return lbp
 
+#########################################################################################
+# Funciones de creación de audio a partir de transformadas por bloques
+#########################################################################################
 
-def DFT_img(imagen_gris):
+def imagen_a_audio_dft(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=50):
     """
-    Calcula la Transformada Discreta de Fourier (DFT) 2D de una imagen en escala de grises,
-    y devuelve los promedios de magnitud espectral a lo largo de los ejes X e Y.
-    """
-    
-    img = imagen_gris.astype(np.float32) # Asegurar tipo float para precisión
-    DFT = fft.fft2(img)                  # Aplicar FFT 2D
-    F_shift = fft.fftshift(DFT)
-    modulo = np.abs(F_shift)             # Modulo del espectro
-    DFT_x = np.mean(modulo, axis=0)      # Media de las frecuencias de las columnas
-    DFT_y = np.mean(modulo, axis=1)      # Media de las frecuencias de las filas
-    return DFT_x, DFT_y
+    Procesa una imagen, extrae sus frecuencias principales y genera un tono a partir de ellas
 
-def DCT_img(imagen_gris):
-    """
-    Calcula la Transformada Discreta del Coseno (DCT) 2D de una imagen en escala de grises,
-    y devuelve los promedios de magnitud espectral a lo largo de los ejes X e Y.
-    """
-    
-    img = imagen_gris.astype(np.float32)                        # Asegurar tipo float para precisión
-    DCT = fft.dct(fft.dct(img.T, norm='ortho').T, norm='ortho') # DCT por filas, luego por columnas (2D)
-    magnitud = np.abs(DCT)                                      # Modulo de la transformada
-    DCT_x = np.mean(magnitud, axis=0)                           # Media de las frecuencias de las columnas
-    DCT_y = np.mean(magnitud, axis=1)                           # Media de las frecuencias de las filas
-    return DCT_x, DCT_y
+    Args:
+        nombre_archivo (str): Ruta de la imagen a procesar
+        fs (int): Frecuencia de muestreo para el audio
+        duracion_nota (float): Duración de cada nota en segundos
+        duracion_total (float): Duración total del audio en segundos
+        num_frecuencias (int): Número de frecuencias principales a extraer
 
-def espectrograma_por_bloques(imagen_gris, block_size=16, return_db=False):
+    Returns:
+        None
     """
-    Divide la imagen en bloques horizontales (como ventanas STFT)
-    y calcula el espectro 1D (por filas) de cada bloque.
-    
-    Devuelve un espectrograma simulado (2D: frecuencia vs tiempo).
-    """
-    h, w          = imagen_gris.shape              # Filas, columnas de la imagen
-    n_blocks      = w // block_size                # cantidad de bloques horizontales
-    img           = imagen_gris.astype(np.float32)
-    espectrograma = []
+    # Leer y procesar la imagen
+    imagen = cv2.resize(imagen_gris, (256, 256))
+    valores_pixeles = imagen.flatten()
 
-    for i in range(n_blocks):
-        inicio = i * block_size
-        fin = inicio + block_size
-        bloque   = img[:, inicio:fin]          # Bloque vertical: todas las filas, block_size columnas
-        señal    = bloque.mean(axis=1)         # Promediamos para tener una señal 1D (como una ventana de audio)
-        espectro = np.abs(np.fft.fft(señal))   # FFT del bloque
-        espectro = espectro[:len(espectro)//2] # Espectro unilateral
-        espectrograma.append(espectro)
+    espectro    = np.abs(fft.fft(valores_pixeles))            # Se calcula el espectro unilateral de los valores de los pixeles
+    frecuencias = fft.fftfreq(len(valores_pixeles), d=1 / fs) # Se calculan las frecuencias correspondientes a cada componente del espectro
+    frecuencias = frecuencias[frecuencias > 0]                # Solo las positivas
+    espectro    = espectro[:len(frecuencias)]                 # Se recorta el espectro para que coincida con las frecuencias positivas
 
-    espectrograma = np.array(espectrograma).T # Convertimos lista a matriz (freq x tiempo simulado)
-    
-    if return_db:
-        espectrograma_db = 20 * np.log10(espectrograma + 1e-5) # Escala logarítmica (opcional)
-        return espectrograma_db
-    else:
-        return espectrograma
-    
-def flatness(espectrograma):
+    indices_principales     = np.argsort(espectro)[-num_frecuencias:]    # Obtener las frecuencias principales
+    frecuencias_principales = frecuencias[indices_principales]           # Se seleccionan las frecuencias con mayor intensidad
+    notas_midi              = frecuencia_a_midi(frecuencias_principales) # Sacar las frecuancias MIDI corresponientes
+
+    num_notas    = min(len(notas_midi), int(duracion_total / duracion_nota)) # Ajustar la duracion de las notas
+    duraciones   = np.full(num_notas, duracion_nota)                         # Crea un array de duraciones con la duracion de la nota que se le pasa
+    notas_midi   = notas_midi[:num_notas] 
+    amplitudes   = np.ones_like(notas_midi)
+    desviaciones = np.zeros_like(notas_midi)
+
+    # Generar el audio
+    audio, tiempo = vz.generar_tono_pitchmidi(notas_midi, duraciones, amplitudes, desviaciones, fs)
+    return audio
+
+def imagen_a_audio_dct(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=75, tam_bloque=8, dur=None, amp=None, desv=None):
     """
-    Calcula la flatness de un espectrograma dado
+    Procesa una imagen en escala de grises, aplica la DCT por bloques y genera una señal de audio a partir
+    de las frecuencias principales codificadas en los coeficientes DCT.
+
+    Args:
+        imagen_gris (np.ndarray): Imagen de un solo canal (grises).
+        fs (int): Frecuencia de muestreo para el audio.
+        duracion_nota (float): Duración de cada nota en segundos.
+        duracion_total (float): Duración total del audio en segundos.
+        num_frecuencias (int): Número de frecuencias principales a extraer.
+        tam_bloque (int): Tamaño de bloque para la DCT (por defecto 8x8).
+
+    Returns:
+        np.ndarray: Señal de audio generada.
+    """
+
+    # Redimensionar imagen
+    imagen = cv2.resize(imagen_gris, (256, 256))
+    alto, ancho = imagen.shape
+    coeficientes = []
+
+    # Aplicar DCT 2D por bloques
+    for i in range(0, alto, tam_bloque):
+        for j in range(0, ancho, tam_bloque):
+            bloque = imagen[i:i+tam_bloque, j:j+tam_bloque].astype(float)
+            bloque_dct = fft.dct(fft.dct(bloque.T, norm='ortho').T, norm='ortho')
+            # Aplanar y guardar los coeficientes (ignorando el DC [0,0])
+            coeficientes.extend(np.abs(bloque_dct.flatten()[1:]))
+
+    coeficientes = np.array(coeficientes)
+
+    # Seleccionar los índices con mayor magnitud
+    indices_principales = np.argsort(coeficientes)[-num_frecuencias:]
+
+    # Mapear esos índices a frecuencias arbitrarias dentro del rango audible
+    freqs = np.logspace(np.log10(20), np.log10(8000), len(coeficientes))  # Espacio de frecuencias
+    frecuencias_principales = freqs[indices_principales]
+
+    # Convertir a notas MIDI
+    notas_midi = frecuencia_a_midi(frecuencias_principales)
+
+    # Recortar al número de notas posible según la duración
+    num_notas = min(len(notas_midi), int(duracion_total / duracion_nota))
+    
+    notas_midi = notas_midi[:num_notas]
+    if dur == None:
+        dur = np.full(num_notas, duracion_nota)
+    if amp == None:
+        amp = np.ones_like(notas_midi)
+    if desv == None:
+        desv = np.zeros_like(notas_midi)
+
+    # Generar audio
+    audio, tiempo = vz.generar_tono_pitchmidi(notas_midi, dur, amp, desv, fs)
+    return audio
+
+#########################################################################################
+# Funciones para mapeo de características de imagen en audio
+#########################################################################################
+
+def mapeo_color(r, g, b, fs, duracion):
+    """
+    Mapea los canales R, G y B a pitch, amplitud y duración.
+    """
+    # Promedios globales de cada canal
+    r_mean = np.mean(r)
+    g_mean = np.mean(g)
+    b_mean = np.mean(b)
+
+    # Normaliza a [0,1]
+    r_norm = r_mean / 255
+    g_norm = g_mean / 255
+    b_norm = b_mean / 255
+
+    # Mapea a pitch MIDI entre 40 y 100 (E2 a E7)
+    desv = int(40 + r_norm * 60)
+
+    # Mapea amplitud entre 0.3 y 1.0
+    amp = 0.3 + g_norm * 0.7
+
+    # Mapea duración entre 0.2 y 1.5s
+    dur = 0.2 + b_norm * 1.3
+
+    # Ajustar cantidad de notas a duración total
+    num_notas = int(duracion // dur)
+    amps = [amp] * num_notas
+    durs = [dur] * num_notas
+    desv = [desv] * num_notas
+    return durs, amps, desv
+
+
+def mapeo_histograma(histograma, x, fs=16000):
+    """
+    A partir del valor medio de la derivada del
+    histograma de una imagen, aplica unnvibrato 
+    a una señal de audio.
+    """
+    hist_norm     = histograma/np.max(histograma)
+    hist_norm     = np.squeeze(hist_norm)
+    der_hist_norm = np.diff(hist_norm)
+    fm            = 10*np.mean(der_hist_norm)
+    Afm           = np.mean(der_hist_norm)/10
+    vibrato       = vz.vibrato(x,5, 0.01, fs)
+    return vibrato
+
+def mapeo_gradiente(gradiente,aplicar_ventana=True):
+    """
+    Función de mapeo que genera coeficientes de un filtro 
+    FIR a partir de la media de las filas de una imagen de 
+    gradiente.
+
     Parámetros:
-    - espectrograma: ndarray 2D; un espectrograma
-    
-    Output:
-    - flatness: ndarray 1D; un vector que contiene las
-    medidas de flatness del espectrograma dado.
-    """
-    flatness = librosa.feature.spectral_flatness(S=espectrograma)
-    return flatness
+    - gradiente: array 2D, imagen con la magnitud del gradiente (normalmente positiva)
+    - aplicar_ventana: si se aplica ventana de Hamming para suavizar los extremos
 
-def centroide(espectrograma):
+    Devuelve:
+    - coef: array 1D de coeficientes FIR normalizados
     """
-    Calcula el centroide de un espectrograma dado
-    Parámetros:
-    - espectrograma: ndarray 2D; un espectrograma
-    
-    Output:
-    - centroide: ndarray 1D; un vector que contiene las
-    medidas del centroide espectral del espectrograma dado.
-    """
-    centroide = librosa.feature.spectral_centroid(S=espectrograma)
-    return centroide
+    # Paso 1: Normalizar la imagen (evita distorsión por rango alto de valores)
+    grad_norm = gradiente.astype(np.float32)
+    grad_norm /= grad_norm.max() if grad_norm.max() > 0 else 1
 
-def ancho_banda(espectrograma):
+    # Paso 2: Calcular el perfil medio por fila
+    coef = np.mean(grad_norm, axis=1)  # 1 valor por fila
+
+    # Paso 4: Aplicar ventana de Hamming si se desea
+    if aplicar_ventana:
+        ventana = signal.get_window("hamming",len(coef))
+        coef = coef*ventana
+
+    # Paso 5: Normalizar energía total del filtro (evita amplificación o atenuación global)
+    coef /= np.sum(coef) if np.sum(coef) != 0 else 1
+    return coef
+
+def mapeo_LBP(LBP):
     """
-    Calcula el ancho de banda espectral de un espectrograma dado
-    Parámetros:
-    - espectrograma: ndarray 2D; un espectrograma
-    
-    Output:
-    - ancho_banda: ndarray 1D; un vector que contiene las
-    medidas del ancho de banda espectral del espectrograma dado.
+    Función de mapeo que calcula la
+    entropía de una imagen LBP y 
+    devuelve una cantidad de bits con
+    los que se recuantificará el audio.
     """
-    ancho_banda = librosa.feature.spectral_bandwidth(S=espectrograma)
-    return ancho_banda
+    entropia = entropia(LBP)
+    bits = np.floor(entropia)
+    return
 
 #########################################################################################
 # Funciones para creación de audio
@@ -272,46 +337,42 @@ def frecuencia_a_midi(freqs):
         freqs (numpy.ndarray): Array de frecuencias.
 
     Returns:
-        numpy.ndarray: Notas MIDI restringidas al rango 48-96 correspondiente a las notas C2 - C7
+        numpy.ndarray: Notas MIDI
     """
+    notas_midi = np.round(69 + 12 * np.log2(freqs / 440)).astype(int)
+    return notas_midi
     
-    # https://newt.phys.unsw.edu.au/jw/notes.html
-    notas_midi = np.round(69 + 12 * np.log2(freqs / 440)).astype(int) # De frecuencia a nota MIDI es 69 + 12 * log2(f / 440)
-    return np.clip(notas_midi, 48, 96)
+def extraccion_caracteristicas(input_img):
+    imagen = np.resize(256,256,3) # Cambiamos el tamaño de la imagen
+    r,g,b = extract_rgb(imagen)   # Extreamos canales de color
+    y = extract_y(imagen)         # Extraemos canal de brillo
+    histograma = histograma(y)    # Histograma 
+    gradiente = gradiente(y)      # Gradiente 
+    entropia = entropia(y)        # Entropía 
+    LBP = LBP(y)                  # LBP 
 
-def nota_midi_a_frecuencia(nota_midi):
-    return 440.0 * (2 ** ((nota_midi - 69) / 12.0))
+    caracteristicas = {"brillo":y,
+                      "color":{"R":r,"G":g,"B":b},
+                      "histograma":histograma,
+                      "gradiente":gradiente,
+                      "entropia":entropia,
+                      "LBP":LBP
+                      }
+    return caracteristicas
 
-# genera las frecuencias de una escala musical a partir de una nota raiz, tipo de escala y rango de octavas
-def generar_frecuencias_escala(nota_raiz=None, tipo_escala=None, octava_base=3, num_octavas=3):
-    nombres_notas = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-    intervalos_mayor = [0, 2, 4, 5, 7, 9, 11]  # Intervalos para la escala mayor
-    intervalos_menor = [0, 2, 3, 5, 7, 8, 10]  # Intervalos para la escala menor
+def mapeo_caracteristicas(caracteristicas):
+    return mapeo
 
-    # selecciona una nota raiz y tipo de escala aleatoriamente si no se proporcionan
-    if nota_raiz is None:
-        nota_raiz = random.choice(nombres_notas)
-    if tipo_escala is None:
-        tipo_escala = random.choice(['mayor', 'menor'])
+def sintetizar_audio():
+    return audio
 
-    indice_raiz = nombres_notas.index(nota_raiz)
-    intervalos = intervalos_mayor if tipo_escala == 'mayor' else intervalos_menor
-    frecuencias_escala = []
-    # genera las frecuencias para cada octava y cada intervalo de la escala
-    for octava in range(octava_base, octava_base + num_octavas):
-        for intervalo in intervalos:
-            nota_midi = indice_raiz + intervalo + (octava * 12)
-            freq = nota_midi_a_frecuencia(nota_midi)
-            frecuencias_escala.append(freq)
-    return np.array(frecuencias_escala)
-
-# ajusta una frecuencia dada a la frecuencia mas cercana en una escala musical
-def ajustar_a_escala(frecuencia, escala_frecuencias):
-    return escala_frecuencias[np.argmin(np.abs(escala_frecuencias - frecuencia))]
-
-# fusiona una melodia y un ritmo, mezclandolos con diferentes pesos
-def fusionar_melodia_y_ritmo(melodia, ritmo):
-    longitud = min(len(melodia), len(ritmo))  # asegura que ambas señales tengan la misma longitud
-    combinado = melodia[:longitud] * 0.2 + ritmo[:longitud] * 0.6  # mezcla las señales con pesos
-    combinado /= np.max(np.abs(combinado) + 1e-8)  # normaliza la señal combinada
-    return combinado
+def imagen_a_audio_expandido(imagen, fs=44100, duracion_total=5.0):
+    # 1. Extraer características visuales
+    caracteristicas = extraer_caracteristicas_visuales(imagen, fs)
+    
+    # 2. Mapear características → parámetros sonoros
+    parametros = mapear_a_parametros_sonoros(caracteristicas, duracion_total)
+    
+    # 3. Sintetizar audio
+    audio = sintetizar_audio(parametros, fs)
+    return audio
