@@ -1,9 +1,5 @@
-#########################################################################################
-# De imagen a audio COMIENZO
-#########################################################################################
-
 """
-Este apartado pretende conglomerar todas las funciones de momento desarrolladas en el proyecto
+Este archivo pretende conglomerar todas las funciones de momento desarrolladas en el proyecto
 PixelSounds para creación de audio a partir de imágenes. 
 """
 
@@ -25,7 +21,7 @@ from scipy import signal
 with warnings.catch_warnings():
     warnings.simplefilter('ignore')
     import vozyaudio as vz
-np.float = float 
+np.float = float  
 
 #########################################################################################
 # Funciones para extracción de características de imágenes
@@ -143,23 +139,10 @@ def LBP(imagen_gris):
     return lbp
 
 #########################################################################################
-# Funciones para creación de audio
+# Funciones de creación de audio a partir de transformadas por bloques
 #########################################################################################
 
-def frecuencia_a_midi(freqs):
-    """
-    Convierte una lista de frecuencias a notas MIDI enteras y las restringe al rango 60-96
-
-    Args:
-        freqs (numpy.ndarray): Array de frecuencias.
-
-    Returns:
-        numpy.ndarray: Notas MIDI
-    """
-    notas_midi = np.round(69 + 12 * np.log2(freqs / 440)).astype(int)
-    return notas_midi
-
-def imagen_a_audio_dft(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=50, dur=None, amp=None, desv=None):
+def imagen_a_audio_dft(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=50):
     """
     Procesa una imagen, extrae sus frecuencias principales y genera un tono a partir de ellas
 
@@ -187,13 +170,10 @@ def imagen_a_audio_dft(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, nu
     notas_midi              = frecuencia_a_midi(frecuencias_principales) # Sacar las frecuancias MIDI corresponientes
 
     num_notas    = min(len(notas_midi), int(duracion_total / duracion_nota)) # Ajustar la duracion de las notas
-    notas_midi = notas_midi[:num_notas]
-    if dur == None:
-        dur = np.full(num_notas, duracion_nota)
-    if amp == None:
-        amp = np.ones_like(notas_midi)
-    if desv == None:
-        desv = np.zeros_like(notas_midi)
+    duraciones   = np.full(num_notas, duracion_nota)                         # Crea un array de duraciones con la duracion de la nota que se le pasa
+    notas_midi   = notas_midi[:num_notas] 
+    amplitudes   = np.ones_like(notas_midi)
+    desviaciones = np.zeros_like(notas_midi)
 
     # Generar el audio
     audio, tiempo = vz.generar_tono_pitchmidi(notas_midi, duraciones, amplitudes, desviaciones, fs)
@@ -346,5 +326,53 @@ def mapeo_LBP(LBP):
     return
 
 #########################################################################################
-# De imagen a audio FIN
+# Funciones para creación de audio
 #########################################################################################
+
+def frecuencia_a_midi(freqs):
+    """
+    Convierte una lista de frecuencias a notas MIDI enteras y las restringe al rango 60-96
+
+    Args:
+        freqs (numpy.ndarray): Array de frecuencias.
+
+    Returns:
+        numpy.ndarray: Notas MIDI
+    """
+    notas_midi = np.round(69 + 12 * np.log2(freqs / 440)).astype(int)
+    return notas_midi
+    
+def extraccion_caracteristicas(input_img):
+    imagen = np.resize(256,256,3) # Cambiamos el tamaño de la imagen
+    r,g,b = extract_rgb(imagen)   # Extreamos canales de color
+    y = extract_y(imagen)         # Extraemos canal de brillo
+    histograma = histograma(y)    # Histograma 
+    gradiente = gradiente(y)      # Gradiente 
+    entropia = entropia(y)        # Entropía 
+    LBP = LBP(y)                  # LBP 
+
+    caracteristicas = {"brillo":y,
+                      "color":{"R":r,"G":g,"B":b},
+                      "histograma":histograma,
+                      "gradiente":gradiente,
+                      "entropia":entropia,
+                      "LBP":LBP
+                      }
+    return caracteristicas
+
+def mapeo_caracteristicas(caracteristicas):
+    return mapeo
+
+def sintetizar_audio():
+    return audio
+
+def imagen_a_audio_expandido(imagen, fs=44100, duracion_total=5.0):
+    # 1. Extraer características visuales
+    caracteristicas = extraer_caracteristicas_visuales(imagen, fs)
+    
+    # 2. Mapear características → parámetros sonoros
+    parametros = mapear_a_parametros_sonoros(caracteristicas, duracion_total)
+    
+    # 3. Sintetizar audio
+    audio = sintetizar_audio(parametros, fs)
+    return audio
