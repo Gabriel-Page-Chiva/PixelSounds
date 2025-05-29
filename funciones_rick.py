@@ -8,6 +8,8 @@ from scipy.signal import firwin, lfilter, get_window
 from scipy.fft import fft, ifft
 from scipy.io import wavfile as wav
 from vozyaudio import lee_audio, sonido
+import ffmpeg
+
 
 class PixelSoundsEncoder:
     """
@@ -209,37 +211,34 @@ class PixelSoundsEncoder:
         print(f"[Encoder] Frames generados en '{self.frames_dir}/'")
 
 
+
     def encode_video(self, output_name=None):
         """
-        Llama a ffmpeg para empaquetar los frames PNG como un MP4 sin perdida.
+        Empaqueta los frames PNG en un MP4 sin pérdida usando ffmpeg-python.
 
-        - Usa libx264 en modo sin compresion (crf 0)
-        - Preset "veryslow" para mejor compresion sin afectar calidad
-        - Formato de color: yuv444p
+        - Usa libx264 con CRF 0 (sin compresión con pérdida)
+        - Preset "veryslow" para mejor compresión
+        - Formato yuv444p para preservar color
         """
         base = os.path.splitext(os.path.basename(self.audio_path))[0]
         name = output_name or f"{base}_{self.map_mode}_{self.color_mode}.mp4"
         out  = os.path.join(self.export_dir, name)
 
-        # borrar si ya existia
         if os.path.exists(out):
             os.remove(out)
 
-        # construir comando ffmpeg
-        cmd = [
-            "ffmpeg",
-            "-y",                            # sobrescribe sin preguntar
-            "-framerate", str(self.fps),    # fps usado en codificacion
-            "-i", os.path.join(self.frames_dir, "frame_%04d.png"),  # input por patron
-            "-c:v", "libx264",              # codec de video
-            "-crf", "0",                    # calidad sin perdida
-            "-preset", "veryslow",          # compresion optima
-            "-pix_fmt", "yuv444p",          # formato RGB completo
-            out
-        ]
+        (
+            ffmpeg
+            .input(os.path.join(self.frames_dir, 'frame_%04d.png'), framerate=self.fps)
+            .output(out,
+                    vcodec='libx264',
+                    crf=0,
+                    preset='veryslow',
+                    pix_fmt='yuv444p')
+            .overwrite_output()
+            .run()
+        )
 
-        # ejecutar ffmpeg
-        subprocess.run(cmd, check=True)
         print(f"[Encoder] Video exportado en '{out}'")
         return out
 
