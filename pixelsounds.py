@@ -159,47 +159,70 @@ def frecuencia_a_midi(freqs):
     notas_midi = np.round(69 + 12 * np.log2(freqs / 440)).astype(int)
     return notas_midi
 
-def imagen_a_audio_dft(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=50, dur=None, amp=None, desv=None):
+def imagen_a_audio_dft(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=75, tam_bloque=8, dur=np.array([False]), amp=np.array([False]), desv=np.array([False])):
     """
-    Procesa una imagen, extrae sus frecuencias principales y genera un tono a partir de ellas
+    Convierte una imagen en escala de grises en un audio utilizando la FFT 2D
+    por bloques. Selecciona las frecuencias visuales dominantes y las convierte en tonos audibles.
 
     Args:
-        nombre_archivo (str): Ruta de la imagen a procesar
-        fs (int): Frecuencia de muestreo para el audio
-        duracion_nota (float): Duración de cada nota en segundos
-        duracion_total (float): Duración total del audio en segundos
-        num_frecuencias (int): Número de frecuencias principales a extraer
+        imagen_gris (np.ndarray): Imagen 2D en escala de grises.
+        fs (int): Frecuencia de muestreo del audio.
+        duracion_nota (float): Duración de cada nota en segundos.
+        duracion_total (float): Duración total del audio en segundos.
+        num_frecuencias (int): Número de frecuencias a extraer.
+        tam_bloque (int): Tamaño de los bloques cuadrados para FFT.
+        dur (np.ndarray or None): Duraciones personalizadas.
+        amp (np.ndarray or None): Amplitudes personalizadas.
+        desv (np.ndarray or None): Desviaciones para modulación.
 
     Returns:
-        None
+        np.ndarray: Señal de audio generada.
     """
-    # Leer y procesar la imagen
+    # Redimensionar imagen
     imagen = cv2.resize(imagen_gris, (256, 256))
-    valores_pixeles = imagen.flatten()
+    alto, ancho = imagen.shape
+    coeficientes = []
+    
+    # FFT 2D por bloques
+    for i in range(0, alto, tam_bloque):
+        for j in range(0, ancho, tam_bloque):
+            bloque = imagen[i:i+tam_bloque, j:j+tam_bloque].astype(float)
+            bloque_fft = fft.fft2(bloque)
 
-    espectro    = np.abs(fft.fft(valores_pixeles))            # Se calcula el espectro unilateral de los valores de los pixeles
-    frecuencias = fft.fftfreq(len(valores_pixeles), d=1 / fs) # Se calculan las frecuencias correspondientes a cada componente del espectro
-    frecuencias = frecuencias[frecuencias > 0]                # Solo las positivas
-    espectro    = espectro[:len(frecuencias)]                 # Se recorta el espectro para que coincida con las frecuencias positivas
+            # Extraer magnitudes, ignorando componente DC
+            mag = np.abs(bloque_fft)
+            mag[0, 0] = 0  # Ignora DC
+            mitad = tam_bloque // 2
+            coeficientes.extend(mag[:mitad, :mitad].flatten())
 
-    indices_principales     = np.argsort(espectro)[-num_frecuencias:]    # Obtener las frecuencias principales
-    frecuencias_principales = frecuencias[indices_principales]           # Se seleccionan las frecuencias con mayor intensidad
-    notas_midi              = frecuencia_a_midi(frecuencias_principales) # Sacar las frecuancias MIDI corresponientes
+    coeficientes = np.array(coeficientes)
 
-    num_notas    = min(len(notas_midi), int(duracion_total / duracion_nota)) # Ajustar la duracion de las notas
+    # Seleccionar los índices con mayor magnitud
+    indices_principales = np.argsort(coeficientes)[-num_frecuencias:]
+
+    # Mapear esos índices a frecuencias arbitrarias dentro del rango audible
+    freqs = np.logspace(np.log10(20), np.log10(fs/2), len(coeficientes))  # Espacio de frecuencias
+    frecuencias_principales = freqs[indices_principales]
+
+    # Convertir a notas MIDI
+    notas_midi = frecuencia_a_midi(frecuencias_principales)
+
+    # Recortar al número de notas posible según la duración
+    num_notas = min(len(notas_midi), int(duracion_total / duracion_nota))
+    
     notas_midi = notas_midi[:num_notas]
-    if dur == None:
+    if dur.all() == False:
         dur = np.full(num_notas, duracion_nota)
-    if amp == None:
+    if amp.all() == False:
         amp = np.ones_like(notas_midi)
-    if desv == None:
+    if desv.all() == False:
         desv = np.zeros_like(notas_midi)
 
-    # Generar el audio
-    audio, tiempo = vz.generar_tono_pitchmidi(notas_midi, duraciones, amplitudes, desviaciones, fs)
+    # Generar audio
+    audio, tiempo = vz.generar_tono_pitchmidi(notas_midi, dur, amp, desv, fs)
     return audio
 
-def imagen_a_audio_dct(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=75, tam_bloque=8, dur=None, amp=None, desv=None):
+def imagen_a_audio_dct(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, num_frecuencias=75, tam_bloque=8, dur=np.array([False]), amp=np.array([False]), desv=np.array([False])):
     """
     Procesa una imagen en escala de grises, aplica la DCT por bloques y genera una señal de audio a partir
     de las frecuencias principales codificadas en los coeficientes DCT.
@@ -235,7 +258,7 @@ def imagen_a_audio_dct(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, nu
     indices_principales = np.argsort(coeficientes)[-num_frecuencias:]
 
     # Mapear esos índices a frecuencias arbitrarias dentro del rango audible
-    freqs = np.logspace(np.log10(20), np.log10(8000), len(coeficientes))  # Espacio de frecuencias
+    freqs = np.logspace(np.log10(20), np.log10(fs/2), len(coeficientes))  # Espacio de frecuencias
     frecuencias_principales = freqs[indices_principales]
 
     # Convertir a notas MIDI
@@ -245,11 +268,11 @@ def imagen_a_audio_dct(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, nu
     num_notas = min(len(notas_midi), int(duracion_total / duracion_nota))
     
     notas_midi = notas_midi[:num_notas]
-    if dur == None:
+    if dur.all() == False:
         dur = np.full(num_notas, duracion_nota)
-    if amp == None:
+    if amp.all() == False:
         amp = np.ones_like(notas_midi)
-    if desv == None:
+    if desv.all() == False:
         desv = np.zeros_like(notas_midi)
 
     # Generar audio
@@ -260,14 +283,16 @@ def imagen_a_audio_dct(imagen_gris, fs, duracion_nota=0.5, duracion_total=10, nu
 # Funciones para mapeo de características de imagen en audio
 #########################################################################################
 
-def mapeo_color(r, g, b, fs, duracion):
+def mapeo_color(r, g, b, fs, duracion=10):
     """
-    Mapea los canales R, G y B a pitch, amplitud y duración.
+    Mapea los canales R, G y B a desviación, amplitud y duración.
     """
+    n_notas = fs*duracion
+    
     # Promedios globales de cada canal
-    r_mean = np.mean(r)
-    g_mean = np.mean(g)
-    b_mean = np.mean(b)
+    r_mean = np.mean(r, axis=1)
+    g_mean = np.mean(g, axis=1)
+    b_mean = np.mean(b, axis=1)
 
     # Normaliza a [0,1]
     r_norm = r_mean / 255
@@ -275,7 +300,8 @@ def mapeo_color(r, g, b, fs, duracion):
     b_norm = b_mean / 255
 
     # Mapea a pitch MIDI entre 40 y 100 (E2 a E7)
-    desv = int(40 + r_norm * 60)
+    desv = 40 + r_norm * 60
+    desv = desv.astype(int)
 
     # Mapea amplitud entre 0.3 y 1.0
     amp = 0.3 + g_norm * 0.7
@@ -283,12 +309,17 @@ def mapeo_color(r, g, b, fs, duracion):
     # Mapea duración entre 0.2 y 1.5s
     dur = 0.2 + b_norm * 1.3
 
-    # Ajustar cantidad de notas a duración total
-    num_notas = int(duracion // dur)
-    amps = [amp] * num_notas
-    durs = [dur] * num_notas
-    desv = [desv] * num_notas
-    return durs, amps, desv
+    # Ajustar el tamaño de los arrays
+    desv = np.tile(desv,int(np.ceil(n_notas/len(desv))))
+    desv = desv[:n_notas]
+
+    amp = np.tile(amp,int(np.ceil(n_notas/len(amp))))
+    amp = amp[:n_notas]
+
+    dur = np.tile(dur,int(np.ceil(n_notas/len(dur))))
+    dur = dur[:n_notas]
+    
+    return dur, amp, desv
 
 
 def mapeo_histograma(histograma, x, fs=16000):
@@ -341,9 +372,9 @@ def mapeo_LBP(LBP):
     devuelve una cantidad de bits con
     los que se recuantificará el audio.
     """
-    entropia = entropia(LBP)
-    bits = np.floor(entropia)
-    return
+    entr = entropia(LBP)
+    bits = np.floor(entr)
+    return bits
 
 #########################################################################################
 # De imagen a audio FIN
